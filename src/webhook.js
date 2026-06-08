@@ -1,7 +1,6 @@
-const { downloadMedia } = require('./whatsapp');
 const { sendMessage } = require('./whatsapp');
 const { appendToSheet } = require('./sheets');
-const { uploadToDrive } = require('./drive');
+const { getMediaUrl } = require('./drive');
 
 // Temporary store to collect location + image per guard per session
 // Key: phone number, Value: { location, imageUrl, timestamp }
@@ -72,11 +71,10 @@ async function handleWebhook(req, res) {
         return;
       }
 
-      await sendMessage(from, `📷 Got your photo! Uploading and logging your check-in...`);
+      await sendMessage(from, `📷 Got your photo! Logging your check-in...`);
 
-      // Download image from WhatsApp, upload to Google Drive
-      const imageBuffer = await downloadMedia(mediaId);
-      const imageUrl    = await uploadToDrive(imageBuffer, `checkin_${from}_${Date.now()}.jpg`);
+      // Get the WhatsApp-hosted media URL directly
+      const imageUrl = await getMediaUrl(mediaId);
 
       // Build the row for Google Sheets
       const session = sessions[from];

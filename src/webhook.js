@@ -1,12 +1,30 @@
 const { sendMessage } = require('./whatsapp');
 const { appendToSheet } = require('./sheets');
 const { getMediaUrl } = require('./drive');
-
-// Session steps in order
-const STEPS = ['location', 'post', 'guardId', 'shift', 'status', 'incident', 'photo'];
+const { reverseGeocode } = require('./geocode');
 
 // Key: phone number, Value: session object
 const sessions = {};
+
+// Inactivity timeout: 5 minutes
+const TIMEOUT_MS = 5 * 60 * 1000;
+
+// ── Clear session after inactivity ────────────────────────────────────────────
+function startTimeout(from) {
+  // Clear any existing timer
+  if (sessions[from]?.timer) clearTimeout(sessions[from].timer);
+
+  sessions[from].timer = setTimeout(async () => {
+    if (sessions[from]) {
+      delete sessions[from];
+      try {
+        await sendMessage(from,
+          `⏰ Your check-in session has expired due to inactivity.\n\nSend any message to start again.`
+        );
+      } catch (e) { /* silent */ }
+    }
+  }, TIMEOUT_MS);
+}
 
 // ── Webhook verification ───────────────────────────────────────────────────────
 function verifyWebhook(req, res) {
@@ -81,26 +99,29 @@ async function handleWebhook(req, res) {
         phone:     from,
         timestamp: new Date().toISOString(),
         step:      'location',
-        // fields to collect
         latitude:  null,
         longitude: null,
         mapLink:   null,
+        address:   null,
         post:      null,
         guardId:   null,
         shift:     null,
         status:    null,
         incident:  null,
         imageUrl:  null,
+        timer:     null,
       };
+      startTimeout(from);
       await promptNext(from, sessions[from]);
       return;
     }
 
     const session = sessions[from];
 
-    // ── Handle each step ──────────────────────────────────────────────────────
+    // Reset inactivity timer on every message
+    startTimeout(from);
 
-    // STEP 1: Location
+    // ── STEP 1: Location ──────────────────────────────────────────────────────
     if (session.step === 'location') {
       if (type !== 'location') {
         await sendMessage(from, `Please share your *location* 📍 using the attachment button.`);
@@ -110,11 +131,13 @@ async function handleWebhook(req, res) {
       session.latitude  = latitude;
       session.longitude = longitude;
       session.mapLink   = `https://maps.google.com/?q=${latitude},${longitude}`;
+      // Reverse geocode in background while guard continues
+      session.address   = await reverseGeocode(latitude, longitude);
       session.step      = 'post';
       await promptNext(from, session);
     }
 
-    // STEP 2: Post name
+    // ── STEP 2: Post name ─────────────────────────────────────────────────────
     else if (session.step === 'post') {
       if (type !== 'text') {
         await sendMessage(from, `Please type your *post or location name*.`);
@@ -125,7 +148,7 @@ async function handleWebhook(req, res) {
       await promptNext(from, session);
     }
 
-    // STEP 3: Guard ID
+    // ── STEP 3: Guard ID ──────────────────────────────────────────────────────
     else if (session.step === 'guardId') {
       if (type !== 'text') {
         await sendMessage(from, `Please type your *Guard ID / Badge Number*.`);
@@ -136,7 +159,7 @@ async function handleWebhook(req, res) {
       await promptNext(from, session);
     }
 
-    // STEP 4: Shift
+    // ── STEP 4: Shift ─────────────────────────────────────────────────────────
     else if (session.step === 'shift') {
       if (type !== 'text') {
         await sendMessage(from, `Please reply with *1*, *2*, or *3* for your shift.`);
@@ -153,7 +176,7 @@ async function handleWebhook(req, res) {
       await promptNext(from, session);
     }
 
-    // STEP 5: Status
+    // ── STEP 5: Status ────────────────────────────────────────────────────────
     else if (session.step === 'status') {
       if (type !== 'text') {
         await sendMessage(from, `Please reply with *1*, *2*, or *3* for your status.`);
@@ -170,7 +193,7 @@ async function handleWebhook(req, res) {
       await promptNext(from, session);
     }
 
-    // STEP 6: Incident report
+    // ── STEP 6: Incident report ───────────────────────────────────────────────
     else if (session.step === 'incident') {
       if (type !== 'text') {
         await sendMessage(from, `Please type your incident report, or type *nil* if nothing to report.`);
@@ -181,7 +204,7 @@ async function handleWebhook(req, res) {
       await promptNext(from, session);
     }
 
-    // STEP 7: Photo — log everything
+    // ── STEP 7: Photo — log everything ────────────────────────────────────────
     else if (session.step === 'photo') {
       if (type !== 'image') {
         await sendMessage(from, `Please send a *photo* of your post 📷`);
@@ -190,8 +213,17 @@ async function handleWebhook(req, res) {
 
       await sendMessage(from, `📷 Got your photo! Logging your check-in...`);
 
-      const imageUrl = await getMediaUrl(message.image.id);
+      const imageUrl  = await getMediaUrl(message.image.id);
+      // Google Sheets IMAGE() formula renders the photo inline in the cell
+      const imageFormula = `=IMAGE("${imageUrl}")`;
+
       session.imageUrl = imageUrl;
+
+      const time = new Date(session.timestamp).toLocaleTimeString('en-GB', {
+        hour:     '2-digit',
+        minute:   '2-digit',
+        timeZone: 'Africa/Lagos',
+      });
 
       // Append to Google Sheet
       await appendToSheet([
@@ -203,17 +235,12 @@ async function handleWebhook(req, res) {
         session.shift,
         session.status,
         session.incident,
+        session.address,
         session.latitude,
         session.longitude,
         session.mapLink,
-        imageUrl,
+        imageFormula,       // renders as actual image in the sheet
       ]);
-
-      const time = new Date(session.timestamp).toLocaleTimeString('en-GB', {
-        hour:     '2-digit',
-        minute:   '2-digit',
-        timeZone: 'Africa/Lagos',
-      });
 
       await sendMessage(from,
         `✅ *Check-in logged at ${time}*\n\n` +
@@ -223,11 +250,12 @@ async function handleWebhook(req, res) {
         `🌙 Shift: ${session.shift}\n` +
         `🚨 Status: ${session.status}\n` +
         `📝 Report: ${session.incident}\n` +
-        `📍 Location: ${session.mapLink}\n\n` +
+        `📍 Address: ${session.address}\n\n` +
         `Stay safe! 🛡️`
       );
 
-      // Clear session
+      // Clear session and timer
+      clearTimeout(session.timer);
       delete sessions[from];
     }
 

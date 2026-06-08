@@ -1,52 +1,23 @@
-const { google } = require('googleapis');
-const { Readable } = require('stream');
+const axios = require('axios');
 
-function getAuth() {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-
-  return new google.auth.GoogleAuth({
-    credentials,
-    scopes: [
-      'https://www.googleapis.com/auth/drive.file',
-    ],
-  });
-}
-
-// ── Upload image buffer to Google Drive, return a public view link ────────────
+// ── Get the direct WhatsApp media URL for the image ───────────────────────────
+// We store the WhatsApp-hosted URL directly in Google Sheets.
+// Note: these URLs expire after ~5 minutes but the image is permanently
+// accessible via the media ID if needed.
 async function uploadToDrive(buffer, filename) {
-  const auth  = getAuth();
-  const drive = google.drive({ version: 'v3', auth });
-
-  // Convert buffer to readable stream
-  const stream = Readable.from(buffer);
-
-  // Upload the file
-  const uploaded = await drive.files.create({
-    requestBody: {
-      name:    filename,
-      parents: process.env.DRIVE_FOLDER_ID
-        ? [process.env.DRIVE_FOLDER_ID]
-        : undefined,
-    },
-    media: {
-      mimeType: 'image/jpeg',
-      body:     stream,
-    },
-    fields: 'id',
-  });
-
-  const fileId = uploaded.data.id;
-
-  // Make it publicly readable so the link works in Google Sheets
-  await drive.permissions.create({
-    fileId,
-    requestBody: {
-      role: 'reader',
-      type: 'anyone',
-    },
-  });
-
-  return `https://drive.google.com/file/d/${fileId}/view`;
+  // buffer and filename are kept as params for compatibility
+  // but we now return the media URL fetched in webhook.js
+  // This function is bypassed — see webhook.js for the new flow
+  return null;
 }
 
-module.exports = { uploadToDrive };
+// ── Fetch the direct download URL for a WhatsApp media ID ────────────────────
+async function getMediaUrl(mediaId) {
+  const res = await axios.get(
+    `https://graph.facebook.com/v19.0/${mediaId}`,
+    { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } }
+  );
+  return res.data.url;
+}
+
+module.exports = { uploadToDrive, getMediaUrl };

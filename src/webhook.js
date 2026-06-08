@@ -2,11 +2,13 @@ const { sendMessage } = require('./whatsapp');
 const { appendToSheet } = require('./sheets');
 const { getMediaUrl } = require('./drive');
 
-// Temporary store to collect location + image per guard per session
-// Key: phone number, Value: { location, imageUrl, timestamp }
+// Session steps in order
+const STEPS = ['location', 'post', 'guardId', 'shift', 'status', 'incident', 'photo'];
+
+// Key: phone number, Value: session object
 const sessions = {};
 
-// ── Webhook verification (Meta calls this when you register the webhook) ──────
+// ── Webhook verification ───────────────────────────────────────────────────────
 function verifyWebhook(req, res) {
   const mode      = req.query['hub.mode'];
   const token     = req.query['hub.verify_token'];
@@ -19,9 +21,43 @@ function verifyWebhook(req, res) {
   res.sendStatus(403);
 }
 
+// ── Prompt the guard for the next step ────────────────────────────────────────
+async function promptNext(from, session) {
+  const step = session.step;
+
+  if (step === 'location') {
+    await sendMessage(from,
+      `👋 Hello ${session.name}! Let's log your check-in.\n\nStep 1️⃣: Please share your *current location* 📍`
+    );
+  } else if (step === 'post') {
+    await sendMessage(from,
+      `✅ Location received!\n\nStep 2️⃣: What is your *post or location name*?\n_(e.g. Gate A, Warehouse B, Main Entrance)_`
+    );
+  } else if (step === 'guardId') {
+    await sendMessage(from,
+      `Step 3️⃣: Enter your *Guard ID / Badge Number*:`
+    );
+  } else if (step === 'shift') {
+    await sendMessage(from,
+      `Step 4️⃣: What is your current *shift*? Reply with a number:\n\n1️⃣ Morning\n2️⃣ Afternoon\n3️⃣ Night`
+    );
+  } else if (step === 'status') {
+    await sendMessage(from,
+      `Step 5️⃣: What is your current *status*? Reply with a number:\n\n1️⃣ All Clear ✅\n2️⃣ Incident ⚠️\n3️⃣ Emergency 🚨`
+    );
+  } else if (step === 'incident') {
+    await sendMessage(from,
+      `Step 6️⃣: Please provide an *incident report*.\n_(Type *nil* if nothing to report)_`
+    );
+  } else if (step === 'photo') {
+    await sendMessage(from,
+      `Step 7️⃣: Finally, send a *photo* of your post 📷`
+    );
+  }
+}
+
 // ── Main message handler ───────────────────────────────────────────────────────
 async function handleWebhook(req, res) {
-  // Always respond 200 immediately so Meta doesn't retry
   res.sendStatus(200);
 
   try {
@@ -29,87 +65,170 @@ async function handleWebhook(req, res) {
     const changes = entry?.changes?.[0];
     const value   = changes?.value;
 
-    if (!value?.messages) return; // ignore status updates
+    if (!value?.messages) return;
 
     const message = value.messages[0];
-    const from    = message.from;          // guard's phone number
+    const from    = message.from;
     const type    = message.type;
     const contact = value.contacts?.[0]?.profile?.name || from;
 
     console.log(`Message from ${contact} (${from}): type=${type}`);
 
-    // ── LOCATION message ──────────────────────────────────────────────────────
-    if (type === 'location') {
-      const { latitude, longitude } = message.location;
-      const mapLink = `https://maps.google.com/?q=${latitude},${longitude}`;
-
-      // Save to session
+    // ── No active session — start a new one ───────────────────────────────────
+    if (!sessions[from]) {
       sessions[from] = {
         name:      contact,
         phone:     from,
-        latitude,
-        longitude,
-        mapLink,
         timestamp: new Date().toISOString(),
+        step:      'location',
+        // fields to collect
+        latitude:  null,
+        longitude: null,
+        mapLink:   null,
+        post:      null,
+        guardId:   null,
+        shift:     null,
+        status:    null,
+        incident:  null,
         imageUrl:  null,
       };
-
-      await sendMessage(from,
-        `✅ Location received!\n📍 ${mapLink}\n\nNow please send a *photo* of your post 📷`
-      );
+      await promptNext(from, sessions[from]);
+      return;
     }
 
-    // ── IMAGE message ─────────────────────────────────────────────────────────
-    else if (type === 'image') {
-      const mediaId = message.image.id;
+    const session = sessions[from];
 
-      if (!sessions[from]) {
-        // Guard sent image without location first
-        await sendMessage(from,
-          `Please share your *location* first 📍 before sending a photo.`
-        );
+    // ── Handle each step ──────────────────────────────────────────────────────
+
+    // STEP 1: Location
+    if (session.step === 'location') {
+      if (type !== 'location') {
+        await sendMessage(from, `Please share your *location* 📍 using the attachment button.`);
+        return;
+      }
+      const { latitude, longitude } = message.location;
+      session.latitude  = latitude;
+      session.longitude = longitude;
+      session.mapLink   = `https://maps.google.com/?q=${latitude},${longitude}`;
+      session.step      = 'post';
+      await promptNext(from, session);
+    }
+
+    // STEP 2: Post name
+    else if (session.step === 'post') {
+      if (type !== 'text') {
+        await sendMessage(from, `Please type your *post or location name*.`);
+        return;
+      }
+      session.post = message.text.body.trim();
+      session.step = 'guardId';
+      await promptNext(from, session);
+    }
+
+    // STEP 3: Guard ID
+    else if (session.step === 'guardId') {
+      if (type !== 'text') {
+        await sendMessage(from, `Please type your *Guard ID / Badge Number*.`);
+        return;
+      }
+      session.guardId = message.text.body.trim();
+      session.step    = 'shift';
+      await promptNext(from, session);
+    }
+
+    // STEP 4: Shift
+    else if (session.step === 'shift') {
+      if (type !== 'text') {
+        await sendMessage(from, `Please reply with *1*, *2*, or *3* for your shift.`);
+        return;
+      }
+      const shiftMap = { '1': 'Morning', '2': 'Afternoon', '3': 'Night' };
+      const shift    = shiftMap[message.text.body.trim()];
+      if (!shift) {
+        await sendMessage(from, `Please reply with *1* (Morning), *2* (Afternoon), or *3* (Night).`);
+        return;
+      }
+      session.shift = shift;
+      session.step  = 'status';
+      await promptNext(from, session);
+    }
+
+    // STEP 5: Status
+    else if (session.step === 'status') {
+      if (type !== 'text') {
+        await sendMessage(from, `Please reply with *1*, *2*, or *3* for your status.`);
+        return;
+      }
+      const statusMap = { '1': 'All Clear ✅', '2': 'Incident ⚠️', '3': 'Emergency 🚨' };
+      const status    = statusMap[message.text.body.trim()];
+      if (!status) {
+        await sendMessage(from, `Please reply with *1* (All Clear), *2* (Incident), or *3* (Emergency).`);
+        return;
+      }
+      session.status = status;
+      session.step   = 'incident';
+      await promptNext(from, session);
+    }
+
+    // STEP 6: Incident report
+    else if (session.step === 'incident') {
+      if (type !== 'text') {
+        await sendMessage(from, `Please type your incident report, or type *nil* if nothing to report.`);
+        return;
+      }
+      session.incident = message.text.body.trim();
+      session.step     = 'photo';
+      await promptNext(from, session);
+    }
+
+    // STEP 7: Photo — log everything
+    else if (session.step === 'photo') {
+      if (type !== 'image') {
+        await sendMessage(from, `Please send a *photo* of your post 📷`);
         return;
       }
 
       await sendMessage(from, `📷 Got your photo! Logging your check-in...`);
 
-      // Get the WhatsApp-hosted media URL directly
-      const imageUrl = await getMediaUrl(mediaId);
-
-      // Build the row for Google Sheets
-      const session = sessions[from];
+      const imageUrl = await getMediaUrl(message.image.id);
       session.imageUrl = imageUrl;
 
+      // Append to Google Sheet
       await appendToSheet([
         session.timestamp,
         session.name,
         session.phone,
+        session.post,
+        session.guardId,
+        session.shift,
+        session.status,
+        session.incident,
         session.latitude,
         session.longitude,
         session.mapLink,
         imageUrl,
       ]);
 
-      // Confirm to guard
       const time = new Date(session.timestamp).toLocaleTimeString('en-GB', {
-        hour:   '2-digit',
-        minute: '2-digit',
+        hour:     '2-digit',
+        minute:   '2-digit',
         timeZone: 'Africa/Lagos',
       });
 
       await sendMessage(from,
-        `✅ *Check-in logged at ${time}*\n\nName: ${session.name}\nLocation: ${session.mapLink}\nPhoto: ${imageUrl}\n\nStay safe! 🛡️`
+        `✅ *Check-in logged at ${time}*\n\n` +
+        `👤 Name: ${session.name}\n` +
+        `🪪 Guard ID: ${session.guardId}\n` +
+        `🏢 Post: ${session.post}\n` +
+        `🌙 Shift: ${session.shift}\n` +
+        `🚨 Status: ${session.status}\n` +
+        `📝 Report: ${session.incident}\n` +
+        `📍 Location: ${session.mapLink}\n\n` +
+        `Stay safe! 🛡️`
       );
 
       // Clear session
       delete sessions[from];
-    }
-
-    // ── TEXT message (greeting / help) ────────────────────────────────────────
-    else if (type === 'text') {
-      await sendMessage(from,
-        `👋 Hello ${contact}!\n\nTo log your check-in, please:\n1️⃣ Share your *location* 📍\n2️⃣ Send a *photo* of your post 📷`
-      );
     }
 
   } catch (err) {

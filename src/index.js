@@ -1,20 +1,22 @@
 const express = require('express');
 const { handleWebhook, verifyWebhook } = require('./webhook');
+const { initDb } = require('./db');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Meta webhook verification (GET)
 app.get('/webhook', verifyWebhook);
-
-// Incoming messages (POST)
 app.post('/webhook', handleWebhook);
+app.get('/', (req, res) => res.send('Security Bot is running ✅'));
 
-// Health check
-app.get('/', (req, res) => res.send('Security Bot is running'));
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Init DB then start server
+initDb()
+  .then(() => {
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  })
+  .catch(err => {
+    console.error('Failed to init DB:', err.message);
+    process.exit(1);
+  });

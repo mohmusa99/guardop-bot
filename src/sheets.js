@@ -21,7 +21,7 @@ async function appendToSheet(row) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range:         'Attendance_Log!A:M',  // A-M = 13 columns         // adjust sheet name if yours is different
+    range:         'Log_Sheet!A:M',  // A-M = 13 columns         // adjust sheet name if yours is different
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [row] },
   });

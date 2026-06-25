@@ -10,8 +10,8 @@ async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS checkins (
       id            SERIAL PRIMARY KEY,
-      checkin_id    TEXT NOT NULL,         -- shared across operatives at same location
-      timestamp     TIMESTAMPTZ NOT NULL,
+      checkin_id    TEXT NOT NULL,
+      timestamp     TEXT NOT NULL,
       name          TEXT NOT NULL,
       guard_id      TEXT NOT NULL,
       phone         TEXT NOT NULL,
@@ -27,6 +27,16 @@ async function initDb() {
       created_at    TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whitelist (
+      id            SERIAL PRIMARY KEY,
+      phone         TEXT UNIQUE NOT NULL,
+      name          TEXT,
+      added_at      TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
   console.log('Database ready');
 }
 
@@ -44,4 +54,40 @@ async function insertCheckin(data) {
   ]);
 }
 
-module.exports = { initDb, insertCheckin };
+// ── Check if a phone number is whitelisted ────────────────────────────────────
+async function isWhitelisted(phone) {
+  const res = await pool.query(
+    `SELECT 1 FROM whitelist WHERE phone = $1`,
+    [phone]
+  );
+  return res.rows.length > 0;
+}
+
+// ── Add a phone number to the whitelist ───────────────────────────────────────
+async function addToWhitelist(phone, name = null) {
+  await pool.query(
+    `INSERT INTO whitelist (phone, name) VALUES ($1, $2)
+     ON CONFLICT (phone) DO NOTHING`,
+    [phone, name]
+  );
+}
+
+// ── Remove a phone number from the whitelist ──────────────────────────────────
+async function removeFromWhitelist(phone) {
+  await pool.query(`DELETE FROM whitelist WHERE phone = $1`, [phone]);
+}
+
+// ── List all whitelisted numbers ──────────────────────────────────────────────
+async function listWhitelist() {
+  const res = await pool.query(`SELECT phone, name FROM whitelist ORDER BY added_at`);
+  return res.rows;
+}
+
+module.exports = {
+  initDb,
+  insertCheckin,
+  isWhitelisted,
+  addToWhitelist,
+  removeFromWhitelist,
+  listWhitelist,
+};

@@ -10,9 +10,9 @@ const { v4: uuidv4 }                 = require('uuid');
 // ── Phone → House mapping ─────────────────────────────────────────────────────
 // Format: 'countrycode+number': 'House Name'
 const PHONE_HOUSE_MAP = {
-  '2349121386412': 'CJN Quarters',
+  '2349121386412': "Justice Abbaaji's Residence",
   '2349121831287': 'Supreme Court Complex',
-  '2348102863616': "Justice Okoro's Quarters",
+  '2348102863616': "Justice Okoro's Residence",
 };
 
 const SHIFT_MAP  = { '1': 'Morning', '2': 'Afternoon', '3': 'Night' };
@@ -174,9 +174,14 @@ async function handleWebhook(req, res) {
     // ── Start new session ─────────────────────────────────────────────────────
     if (!sessions[from]) {
       sessions[from] = {
-        checkinId:        uuidv4(),
-        phone:            from,
-        timestamp:        getNigerianTimestamp(),
+  checkinId: uuidv4(),
+  phone: from,
+
+  // For database
+  dbTimestamp: new Date().toISOString(),
+
+  // For sheets/messages
+  timestamp: getNigerianTimestamp(),
         step:             'location',
         house:            assignedHouse,   // auto-assigned from phone map
         latitude:         null,
@@ -358,8 +363,8 @@ async function handleWebhook(req, res) {
 
         await appendToSheet(row);
         await insertCheckin({
-          checkinId: session.checkinId,
-          timestamp: time,
+  checkinId: session.checkinId,
+  timestamp: session.dbTimestamp,
           name:      operative.name,
           guardId:   operative.guardId,
           phone:     session.phone,

@@ -14,7 +14,7 @@ async function appendToSheet(row) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId:    process.env.SPREADSHEET_ID,
-    range:            'Attendance_Log!A:N',  // A-N = 14 columns
+    range:            'Log_Sheet!A:N',  // A-N = 14 columns
     valueInputOption: 'USER_ENTERED',
     requestBody:      { values: [row] },
   });

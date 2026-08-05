@@ -19,7 +19,7 @@ async function initDb() {
       name          TEXT NOT NULL,
       guard_id      TEXT NOT NULL,
       phone         TEXT NOT NULL,
-      house         TEXT NOT NULL,
+      house         TEXT,
       shift         TEXT NOT NULL,
       status        TEXT NOT NULL,
       armed_police  INTEGER DEFAULT 0,
@@ -37,6 +37,10 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE checkins ADD COLUMN IF NOT EXISTS armed_police INTEGER DEFAULT 0
   `).catch(() => {});
+
+  await pool.query(`
+  ALTER TABLE checkins ALTER COLUMN house DROP NOT NULL
+`).catch(() => {});
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS whitelist (

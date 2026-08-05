@@ -11,6 +11,7 @@ const PHONE_HOUSE_MAP = {
   '2349121386412': 'CJN Quarters',
   '2349121831287': 'Supreme Court Complex',
   '2348102863616': "Justice Okoro's Quarters",
+  '2348145349996': 'Admin',
 };
 
 const SHIFT_MAP  = { '1': 'Morning', '2': 'Afternoon', '3': 'Night' };

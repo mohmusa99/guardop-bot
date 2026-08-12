@@ -8,10 +8,13 @@ const { v4: uuidv4 }                 = require('uuid');
 
 // ── Phone → House mapping ─────────────────────────────────────────────────────
 const PHONE_HOUSE_MAP = {
+  // Number 1 residents
   '2349121386412': 'CJN Quarters',
   '2349121831287': 'Supreme Court Complex',
   '2348102863616': "Justice Okoro's Quarters",
-  '2348145349996': 'Admin',
+  // Number 2 residents
+  '2349130113485': "Justice Garba's Quarters",
+  '2349135314960': "Justice Ogunwumiju's Quarters",
 };
 
 const SHIFT_MAP  = { '1': 'Morning', '2': 'Afternoon', '3': 'Night' };
@@ -33,14 +36,15 @@ function getNigerianTimestamp() {
 }
 
 // ── Inactivity timer ──────────────────────────────────────────────────────────
-function startTimeout(from) {
+function startTimeout(from, phoneNumberId) {
   if (sessions[from]?.timer) clearTimeout(sessions[from].timer);
   sessions[from].timer = setTimeout(async () => {
     if (sessions[from]) {
       delete sessions[from];
       try {
         await sendMessage(from,
-          `⏰ Your check-in session expired due to inactivity.\n\nSend any message to start a new check-in.`
+          `⏰ Your check-in session expired due to inactivity.\n\nSend any message to start a new check-in.`,
+          phoneNumberId
         );
       } catch (e) { /* silent */ }
     }
@@ -61,48 +65,57 @@ function verifyWebhook(req, res) {
 
 // ── Prompt next step ──────────────────────────────────────────────────────────
 async function promptNext(from, session) {
-  const { step, operatives, currentOperative } = session;
+  const { step, operatives, currentOperative, phoneNumberId } = session;
 
   if (step === 'location') {
     await sendMessage(from,
-      `👋 Welcome! Reporting for *${session.house}*.\n\nStep 1️⃣: Please share your *current location* 📍`
+      `👋 Welcome! Reporting for *${session.house}*.\n\nStep 1️⃣: Please share your *current location* 📍`,
+      phoneNumberId
     );
   } else if (step === 'count') {
     await sendMessage(from,
-      `✅ Location received!\n\nStep 2️⃣: How many *operatives* are at this location?\n_(Enter a number, e.g. 2)_`
+      `✅ Location received!\n\nStep 2️⃣: How many *operatives* are at this location?\n_(Enter a number, e.g. 2)_`,
+      phoneNumberId
     );
   } else if (step === 'operative_name') {
     const n = currentOperative + 1;
     const total = operatives.length;
     await sendMessage(from,
-      `👤 *Operative ${n} of ${total}*\n\nEnter their *full name*:`
+      `👤 *Operative ${n} of ${total}*\n\nEnter their *full name*:`,
+      phoneNumberId
     );
   } else if (step === 'operative_id') {
     const n = currentOperative + 1;
     const total = operatives.length;
     await sendMessage(from,
-      `👤 *Operative ${n} of ${total}*\n\nEnter their *Guard ID / Badge Number*:`
+      `👤 *Operative ${n} of ${total}*\n\nEnter their *Guard ID / Badge Number*:`,
+      phoneNumberId
     );
   } else if (step === 'shift') {
     await sendMessage(from,
-      `Step 3️⃣: What is the current *shift*?\n\n1️⃣ Morning\n2️⃣ Afternoon\n3️⃣ Night`
+      `Step 3️⃣: What is the current *shift*?\n\n1️⃣ Morning\n2️⃣ Afternoon\n3️⃣ Night`,
+      phoneNumberId
     );
   } else if (step === 'status') {
     await sendMessage(from,
-      `Step 4️⃣: What is the current *status*?\n\n1️⃣ All Clear ✅\n2️⃣ Incident ⚠️\n3️⃣ Emergency 🚨`
+      `Step 4️⃣: What is the current *status*?\n\n1️⃣ All Clear ✅\n2️⃣ Incident ⚠️\n3️⃣ Emergency 🚨`,
+      phoneNumberId
     );
   } else if (step === 'armed_police') {
     await sendMessage(from,
-      `Step 5️⃣: How many *armed police officers* are currently at this location?\n_(Enter a number, e.g. 2. Enter 0 if none)_`
+      `Step 5️⃣: How many *armed police officers* are currently at this location?\n_(Enter a number, e.g. 2. Enter 0 if none)_`,
+      phoneNumberId
     );
   } else if (step === 'incident') {
     await sendMessage(from,
-      `Step 6️⃣: Please provide an *incident report*.\n_(Type *nil* if nothing to report)_`
+      `Step 6️⃣: Please provide an *incident report*.\n_(Type *nil* if nothing to report)_`,
+      phoneNumberId
     );
   } else if (step === 'photo') {
     const names = session.operatives.map(o => o.name).join(', ');
     await sendMessage(from,
-      `Step 7️⃣: Take a *live group photo* 📷 of all operatives at this post.\n\n_(${names})_\n\n⚠️ *Please take a new photo now — do not upload from gallery.*`
+      `Step 7️⃣: Take a *live group photo* 📷 of all operatives at this post.\n\n_(${names})_\n\n⚠️ *Please take a new photo now — do not upload from gallery.*`,
+      phoneNumberId
     );
   }
 }
@@ -112,17 +125,19 @@ async function handleWebhook(req, res) {
   res.sendStatus(200);
 
   let from;
+  let phoneNumberId;
   try {
     const entry   = req.body?.entry?.[0];
     const value   = entry?.changes?.[0]?.value;
     if (!value?.messages) return;
 
-    const message = value.messages[0];
-    from          = message.from;
-    const type    = message.type;
-    const contact = value.contacts?.[0]?.profile?.name || from;
+    const message   = value.messages[0];
+    from            = message.from;
+    phoneNumberId   = value.metadata?.phone_number_id; // which bot number received this
+    const type      = message.type;
+    const contact   = value.contacts?.[0]?.profile?.name || from;
 
-    console.log(`Message from ${contact} (${from}): type=${type}`);
+    console.log(`Message from ${contact} (${from}) via ${phoneNumberId}: type=${type}`);
 
     // ── ADMIN COMMANDS ────────────────────────────────────────────────────────
     if (ADMIN_NUMBERS.includes(from) && type === 'text') {
@@ -134,13 +149,13 @@ async function handleWebhook(req, res) {
         const phone = parts[0];
         const name  = parts.slice(1).join(' ') || null;
         await addToWhitelist(phone, name);
-        await sendMessage(from, `✅ Added ${phone}${name ? ` (${name})` : ''} to the whitelist.`);
+        await sendMessage(from, `✅ Added ${phone}${name ? ` (${name})` : ''} to the whitelist.`, phoneNumberId);
         return;
       }
       if (lower.startsWith('remove ')) {
         const phone = text.split(' ')[1];
         await removeFromWhitelist(phone);
-        await sendMessage(from, `🗑️ Removed ${phone} from the whitelist.`);
+        await sendMessage(from, `🗑️ Removed ${phone} from the whitelist.`, phoneNumberId);
         return;
       }
       if (lower === 'list') {
@@ -148,7 +163,7 @@ async function handleWebhook(req, res) {
         const listStr = entries.length
           ? entries.map(e => `• ${e.phone}${e.name ? ` (${e.name})` : ''}`).join('\n')
           : 'No numbers whitelisted yet.';
-        await sendMessage(from, `📋 *Whitelisted numbers:*\n\n${listStr}`);
+        await sendMessage(from, `📋 *Whitelisted numbers:*\n\n${listStr}`, phoneNumberId);
         return;
       }
     }
@@ -158,7 +173,8 @@ async function handleWebhook(req, res) {
       const allowed = await isWhitelisted(from);
       if (!allowed) {
         await sendMessage(from,
-          `🚫 This number isn't registered for check-ins.\n\nContact your supervisor to be added.`
+          `🚫 This number isn't registered for check-ins.\n\nContact your supervisor to be added.`,
+          phoneNumberId
         );
         return;
       }
@@ -171,6 +187,7 @@ async function handleWebhook(req, res) {
       sessions[from] = {
         checkinId:        uuidv4(),
         phone:            from,
+        phoneNumberId,            // store which bot number to reply through
         timestamp:        getNigerianTimestamp(),
         step:             'location',
         house:            assignedHouse,
@@ -187,18 +204,18 @@ async function handleWebhook(req, res) {
         imageUrl:         null,
         timer:            null,
       };
-      startTimeout(from);
+      startTimeout(from, phoneNumberId);
       await promptNext(from, sessions[from]);
       return;
     }
 
     const session = sessions[from];
-    startTimeout(from);
+    startTimeout(from, phoneNumberId);
 
     // ── STEP 1: Location ──────────────────────────────────────────────────────
     if (session.step === 'location') {
       if (type !== 'location') {
-        await sendMessage(from, `Please share your *location* 📍 using the attachment button.`);
+        await sendMessage(from, `Please share your *location* 📍 using the attachment button.`, session.phoneNumberId);
         return;
       }
       const { latitude, longitude } = message.location;
@@ -211,10 +228,10 @@ async function handleWebhook(req, res) {
 
     // ── STEP 2: Operative count ───────────────────────────────────────────────
     } else if (session.step === 'count') {
-      if (type !== 'text') { await sendMessage(from, `Please enter the number of operatives.`); return; }
+      if (type !== 'text') { await sendMessage(from, `Please enter the number of operatives.`, session.phoneNumberId); return; }
       const count = parseInt(message.text.body.trim());
       if (isNaN(count) || count < 1 || count > 20) {
-        await sendMessage(from, `Please enter a valid number between 1 and 20.`);
+        await sendMessage(from, `Please enter a valid number between 1 and 20.`, session.phoneNumberId);
         return;
       }
       session.operatives       = Array.from({ length: count }, () => ({ name: null, guardId: null }));
@@ -224,14 +241,14 @@ async function handleWebhook(req, res) {
 
     // ── STEP 3: Operative name ────────────────────────────────────────────────
     } else if (session.step === 'operative_name') {
-      if (type !== 'text') { await sendMessage(from, `Please type the operative's *full name*.`); return; }
+      if (type !== 'text') { await sendMessage(from, `Please type the operative's *full name*.`, session.phoneNumberId); return; }
       session.operatives[session.currentOperative].name = message.text.body.trim();
       session.step = 'operative_id';
       await promptNext(from, session);
 
     // ── STEP 4: Operative ID ──────────────────────────────────────────────────
     } else if (session.step === 'operative_id') {
-      if (type !== 'text') { await sendMessage(from, `Please type the operative's *Guard ID*.`); return; }
+      if (type !== 'text') { await sendMessage(from, `Please type the operative's *Guard ID*.`, session.phoneNumberId); return; }
       session.operatives[session.currentOperative].guardId = message.text.body.trim();
       const next = session.currentOperative + 1;
       if (next < session.operatives.length) {
@@ -244,10 +261,10 @@ async function handleWebhook(req, res) {
 
     // ── STEP 5: Shift ─────────────────────────────────────────────────────────
     } else if (session.step === 'shift') {
-      if (type !== 'text') { await sendMessage(from, `Please reply with *1*, *2*, or *3* for the shift.`); return; }
+      if (type !== 'text') { await sendMessage(from, `Please reply with *1*, *2*, or *3* for the shift.`, session.phoneNumberId); return; }
       const shift = SHIFT_MAP[message.text.body.trim()];
       if (!shift) {
-        await sendMessage(from, `Please reply with *1* (Morning), *2* (Afternoon), or *3* (Night).`);
+        await sendMessage(from, `Please reply with *1* (Morning), *2* (Afternoon), or *3* (Night).`, session.phoneNumberId);
         return;
       }
       session.shift = shift;
@@ -256,10 +273,10 @@ async function handleWebhook(req, res) {
 
     // ── STEP 6: Status ────────────────────────────────────────────────────────
     } else if (session.step === 'status') {
-      if (type !== 'text') { await sendMessage(from, `Please reply with *1*, *2*, or *3* for the status.`); return; }
+      if (type !== 'text') { await sendMessage(from, `Please reply with *1*, *2*, or *3* for the status.`, session.phoneNumberId); return; }
       const status = STATUS_MAP[message.text.body.trim()];
       if (!status) {
-        await sendMessage(from, `Please reply with *1* (All Clear), *2* (Incident), or *3* (Emergency).`);
+        await sendMessage(from, `Please reply with *1* (All Clear), *2* (Incident), or *3* (Emergency).`, session.phoneNumberId);
         return;
       }
       session.status = status;
@@ -268,10 +285,10 @@ async function handleWebhook(req, res) {
 
     // ── STEP 7: Armed police ──────────────────────────────────────────────────
     } else if (session.step === 'armed_police') {
-      if (type !== 'text') { await sendMessage(from, `Please enter the number of armed police officers.`); return; }
+      if (type !== 'text') { await sendMessage(from, `Please enter the number of armed police officers.`, session.phoneNumberId); return; }
       const count = parseInt(message.text.body.trim());
       if (isNaN(count) || count < 0) {
-        await sendMessage(from, `Please enter a valid number (0 if none).`);
+        await sendMessage(from, `Please enter a valid number (0 if none).`, session.phoneNumberId);
         return;
       }
       session.armedPolice = count;
@@ -280,7 +297,7 @@ async function handleWebhook(req, res) {
 
     // ── STEP 8: Incident report ───────────────────────────────────────────────
     } else if (session.step === 'incident') {
-      if (type !== 'text') { await sendMessage(from, `Please type the incident report, or type *nil*.`); return; }
+      if (type !== 'text') { await sendMessage(from, `Please type the incident report, or type *nil*.`, session.phoneNumberId); return; }
       session.incident = message.text.body.trim();
       session.step     = 'photo';
       await promptNext(from, session);
@@ -288,23 +305,23 @@ async function handleWebhook(req, res) {
     // ── STEP 9: Group photo ───────────────────────────────────────────────────
     } else if (session.step === 'photo') {
       if (type !== 'image') {
-        await sendMessage(from, `Please take and send a *live photo* 📷 — do not upload from gallery.`);
+        await sendMessage(from, `Please take and send a *live photo* 📷 — do not upload from gallery.`, session.phoneNumberId);
         return;
       }
 
-      // Gallery detection
       const isForwarded  = message.context?.forwarded === true;
       const forwardScore = message.context?.forwarding_score || 0;
       if (isForwarded || forwardScore > 0) {
         await sendMessage(from,
-          `⚠️ It looks like that image was uploaded from your gallery or forwarded.\n\nPlease *take a new live photo* right now using your camera 📷 and send it.`
+          `⚠️ It looks like that image was uploaded from your gallery or forwarded.\n\nPlease *take a new live photo* right now using your camera 📷 and send it.`,
+          session.phoneNumberId
         );
         return;
       }
 
-      await sendMessage(from, `📷 Got the photo! Logging check-in for all operatives...`);
+      await sendMessage(from, `📷 Got the photo! Logging check-in for all operatives...`, session.phoneNumberId);
 
-      const imageBuffer = await downloadMedia(message.image.id);
+      const imageBuffer = await downloadMedia(message.image.id, session.phoneNumberId);
       const watermarked = await addWatermark(imageBuffer, {
         timestamp:  session.timestamp,
         house:      session.house,
@@ -331,7 +348,6 @@ async function handleWebhook(req, res) {
           session.mapLink,
           `=IMAGE("${imageUrl}")`,
         ];
-
         await appendToSheet(row);
         await insertCheckin({
           checkinId:   session.checkinId,
@@ -365,7 +381,8 @@ async function handleWebhook(req, res) {
         `📝 Report: ${session.incident}\n` +
         `📍 Address: ${session.address}\n\n` +
         `👥 *Operatives logged (${session.operatives.length}):*\n${operativeList}\n\n` +
-        `Stay safe! 🛡️`
+        `Stay safe! 🛡️`,
+        session.phoneNumberId
       );
 
       clearTimeout(session.timer);
@@ -380,7 +397,8 @@ async function handleWebhook(req, res) {
     }
     try {
       if (from) await sendMessage(from,
-        `⚠️ Something went wrong. Please send any message to start again.`
+        `⚠️ Something went wrong. Please send any message to start again.`,
+        phoneNumberId
       );
     } catch (e) { /* silent */ }
   }

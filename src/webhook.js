@@ -16,7 +16,8 @@ const PHONE_HOUSE_MAP = {
   '2349130113485': "Justice Garba's Quarters",
   '2349135314960': "Justice Ogunwumiju's Quarters",
   '2349130113485': "Justice Garba Quarters",
-  '2349135314960': "Justice Ogunwumiju Quarters"
+  '2349135314960': "Justice Ogunwumiju Quarters",
+  '2349078071266': "Tester",
 };
 
 const SHIFT_MAP  = { '1': 'Morning', '2': 'Afternoon', '3': 'Night' };
